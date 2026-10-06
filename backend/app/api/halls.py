@@ -31,9 +31,9 @@ def switch_absent_policy(hall_id: int, payload: AbsentPolicyIn, db: Session = De
     if not hall:
         raise HTTPException(404, "考室不存在")
     try:
-        hall.absent_policy = payload.policy
-        db.commit()
-        plan, result = planning.persist_plan(db, hall)
+        # 策略字段、新方案、占用账整批重写在 persist_plan 内同一事务提交，
+        # 任一步失败均 rollback：策略、占格、方案、统计全部退回保存前。
+        plan, result = planning.persist_plan(db, hall, new_policy=payload.policy)
     except Exception:
         db.rollback()
         raise HTTPException(500, "缺考策略保存失败，已回滚到保存前状态")

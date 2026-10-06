@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.models import Hall
 from app.services import planning
-from app.services.page_rollup import mix_stats, mix_violations
 router = APIRouter(prefix="/seating", tags=["seating"])
 
 @router.post("/run")
@@ -48,5 +47,7 @@ def violations(hall_id: int = 1, db: Session = Depends(get_db)):
 
 @router.get("/stats")
 def stats(hall_id: int = 1, db: Session = Depends(get_db)):
+    # 统计直接取最新方案结果，保证占格人数、未排、缺考、违规数与排座图同一套数据，
+    # 不再叠加任何页侧推算（旧 page_rollup 会凭空加人并把未排伪装成间距违规）。
     data = latest(hall_id=hall_id, db=db)
-    return {"hall_id": hall_id, **mix_stats(data)}
+    return {"hall_id": hall_id, **data.get("stats", {})}

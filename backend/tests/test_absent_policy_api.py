@@ -127,3 +127,57 @@ def test_patch_candidate_absent_flag(client):
     assert res.status_code == 200 and res.json()["absent"] is True
     res = client.patch(f"/api/candidates/{target['id']}", json={"absent": False})
     assert res.status_code == 200 and res.json()["absent"] is False
+
+
+def test_stats_match_latest_map_and_ledger(client):
+    # 占格人数、图、占用账、未排、缺考名单必须跟当前策略对上（两种策略各验一遍）
+    for policy in ("reserve", "release"):
+        assert client.put("/api/halls/1/absent-policy", json={"policy": policy}).status_code == 200
+        latest = client.get("/api/seating/latest?hall_id=1").json()
+        stats = client.get("/api/seating/stats?hall_id=1").json()
+        ledger = client.get("/api/seating/ledger?hall_id=1").json()["rows"]
+        assert latest["absent_policy"] == policy
+        for k in ("seated", "absent_reserved", "absent_released", "occupied",
+                  "unplaced", "violations", "capacity"):
+            assert stats[k] == latest["stats"][k], (policy, k)
+        # 占格合计 = 图上格子数 = 占用账行数
+        assert stats["occupied"] == len(latest["assignments"]) == len(ledger)
+        absent_ids = _absent_ids()
+        absent_in_map = {a["candidate_id"] for a in latest["assignments"] if a["kind"] == "absent_reserve"}
+        absent_in_ledger = {r["candidate_id"] for r in ledger if r["kind"] == "absent_reserve"}
+        if policy == "reserve":
+            assert absent_in_map == absent_in_ledger == absent_ids
+        else:
+            assert absent_in_map == absent_in_ledger == set()
+        # 未排名单永远不含缺考生
+        assert all(u["id"] not in absent_ids for u in latest["unplaced"])
+
+
+def test_commit_phase_failure_rolls_back_policy_and_ledger(client):
+    # 先落到 release 基线
+    assert client.put("/api/halls/1/absent-policy", json={"policy": "release"}).status_code == 200
+    before_policy = client.get("/api/halls").json()[0]["absent_policy"]
+    before_ledger = client.get("/api/seating/ledger?hall_id=1").json()["rows"]
+    before_latest = client.get("/api/seating/latest?hall_id=1").json()
+
+    # 让事务在 commit 阶段失败（此时占用账旧行已在事务内删除）：必须整体退回
+    from sqlalchemy.orm import Session
+    real_commit = Session.commit
+
+    def fail_commit(self):
+        raise RuntimeError("commit failed after ledger rewrite")
+
+    Session.commit = fail_commit
+    try:
+        res = client.put("/api/halls/1/absent-policy", json={"policy": "reserve"})
+    finally:
+        Session.commit = real_commit
+    assert res.status_code == 500
+
+    assert client.get("/api/halls").json()[0]["absent_policy"] == before_policy
+    assert client.get("/api/seating/ledger?hall_id=1").json()["rows"] == before_ledger
+    assert client.get("/api/seating/latest?hall_id=1").json() == before_latest
+    # 失败后再次重排仍按退回后的旧策略出图，不吃残留占格
+    again = client.post("/api/seating/run?hall_id=1").json()
+    assert again["absent_policy"] == "release"
+    assert not any(a["kind"] == "absent_reserve" for a in again["assignments"])

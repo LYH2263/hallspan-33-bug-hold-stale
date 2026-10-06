@@ -1,5 +1,5 @@
 from app.services.seat_engine import (
-    effective_absent_policy, find_violations, manhattan, place_candidates, SeatAssign,
+    effective_absent_policy, find_violations, manhattan, place_candidates, plan_to_dict, SeatAssign,
 )
 
 def test_manhattan():
@@ -87,3 +87,41 @@ def test_unplaced_never_contains_absent_when_full():
     assigns, unplaced, _ = place_candidates(1, 1, 2, cands, "reserve")
     assert [a.candidate_id for a in assigns] == [1]
     assert {u["id"] for u in unplaced} == {2, 3}
+
+
+def test_release_hands_cell_to_later_candidate():
+    # 1x2 只能坐两人：缺考者若占格，第二个在考考生必未排；释放后该格还给后者，全员入座
+    cands = [
+        {"id": 1, "name": "A", "ticket_no": "T1", "paper_id": 1, "absent": True},
+        {"id": 2, "name": "B", "ticket_no": "T2", "paper_id": 2, "absent": False},
+        {"id": 3, "name": "C", "ticket_no": "T3", "paper_id": 1, "absent": False},
+    ]
+    reserve_assigns, reserve_unplaced, reserve_absent = place_candidates(1, 2, 1, cands, "reserve")
+    assert {a.candidate_id for a in reserve_assigns} == {1, 2}
+    assert {u["id"] for u in reserve_unplaced} == {3}
+    assert reserve_absent[0]["status"] == "reserved"
+
+    release_assigns, release_unplaced, release_absent = place_candidates(1, 2, 1, cands, "release")
+    # 缺考者的格子还给后续考生：两个在考考生都坐下，未排为空
+    assert {a.candidate_id for a in release_assigns} == {2, 3}
+    assert all(a.kind == "seat" for a in release_assigns)
+    assert release_unplaced == []
+    assert release_absent[0]["status"] == "released"
+    assert release_absent[0]["row"] is None
+
+
+def test_reserve_and_release_stats_match_cells():
+    cands = _mixed_cands()
+    for policy, reserved, released in (("reserve", 1, 0), ("release", 0, 1)):
+        assigns, unplaced, absent_rows = place_candidates(3, 3, 1, cands, policy)
+        viols = find_violations(3, 3, 1, assigns)
+        data = plan_to_dict(assigns, unplaced, absent_rows, viols, 3, 3, policy)
+        st = data["stats"]
+        assert data["absent_policy"] == policy
+        assert st["absent_reserved"] == reserved
+        assert st["absent_released"] == released
+        # 占格合计 = 图上格子数 = 正常入座 + 缺考占格
+        assert st["occupied"] == st["seated"] + st["absent_reserved"] == len(data["assignments"])
+        assert st["unplaced"] == len(unplaced)
+        assert all(u["id"] != 2 for u in unplaced)
+

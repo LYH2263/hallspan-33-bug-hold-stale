@@ -31,14 +31,20 @@ def build_plan_result(db: Session, hall: Hall) -> dict:
     return result
 
 
-def persist_plan(db: Session, hall: Hall) -> tuple[SeatPlan, dict]:
-    """按考室当前缺考策略重排并落库：插入新方案、整批重写该考室占用账行，同一事务提交。"""
+def persist_plan(db: Session, hall: Hall, new_policy: str | None = None) -> tuple[SeatPlan, dict]:
+    """按考室缺考策略重排并落库：策略字段（如有切换）、新方案、占用账同一事务提交。
+
+    任何一步失败由调用方 rollback，策略字段、占用账、最新方案、统计全部回到保存前。
+    """
+    if new_policy is not None:
+        hall.absent_policy = new_policy
     result = build_plan_result(db, hall)
     plan = SeatPlan(hall_id=hall.id, created_at=datetime.utcnow(),
                     result_json=json.dumps(result, ensure_ascii=False))
     db.add(plan)
     db.flush()
-    # 占用账整批重写：先删旧行，再按新方案写新行（含缺考占格行；释放空出者无行）
+    # 占用账整批重写：先删旧行，再按新方案写新行（含缺考占格行；释放空出者无行）。
+    # 与上面的策略字段更新、方案插入在同一事务，禁止留下旧策略占格。
     db.execute(delete(SeatOccupancy).where(SeatOccupancy.hall_id == hall.id))
     for a in result["assignments"]:
         db.add(SeatOccupancy(
