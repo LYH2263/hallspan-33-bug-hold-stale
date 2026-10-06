@@ -19,7 +19,7 @@ KIND_ABSENT_RESERVE = "absent_reserve"
 
 def effective_absent_policy(raw: str | None) -> str:
     """策略未配置（或非法值）时按释放空出，兼容现网。"""
-    return ABSENT_POLICY_RESERVE if raw != ABSENT_POLICY_RELEASE else ABSENT_POLICY_RESERVE
+    return raw if raw in ABSENT_POLICIES else DEFAULT_ABSENT_POLICY
 
 
 @dataclass
@@ -109,7 +109,6 @@ def place_candidates(rows: int, cols: int, min_dist: int, candidates: list[dict]
     for cand in normal:
         if _try_place(occupied, rows, cols, min_dist, cand, KIND_SEAT) is None:
             unplaced.append(cand)
-    unplaced.extend(absentees)
     return list(occupied.values()), unplaced, absent_rows
 
 def find_violations(rows: int, cols: int, min_dist: int, assigns: list[SeatAssign]) -> list[Violation]:
@@ -142,8 +141,8 @@ def plan_to_dict(assigns: list[SeatAssign], unplaced: list[dict], absent_rows: l
         "violations": [asdict(v) for v in viols],
         "stats": {
             "seated": seated,
-            "absent_reserved": len(absent_rows),
-            "absent_released": 0,
+            "absent_reserved": reserved,
+            "absent_released": released,
             # 占格合计：正常入座 + 缺考占格，含缺考生本人
             "occupied": len(assigns),
             "unplaced": len(unplaced),

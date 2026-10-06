@@ -31,8 +31,8 @@ def switch_absent_policy(hall_id: int, payload: AbsentPolicyIn, db: Session = De
     if not hall:
         raise HTTPException(404, "考室不存在")
     try:
+        # 不单独提交策略字段：persist_plan 的一次 commit 把策略、最新方案、占用账一起落库
         hall.absent_policy = payload.policy
-        db.commit()
         plan, result = planning.persist_plan(db, hall)
     except Exception:
         db.rollback()

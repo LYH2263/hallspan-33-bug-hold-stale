@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.models import Hall
 from app.services import planning
-from app.services.page_rollup import mix_stats, mix_violations
 router = APIRouter(prefix="/seating", tags=["seating"])
 
 @router.post("/run")
@@ -48,5 +47,6 @@ def violations(hall_id: int = 1, db: Session = Depends(get_db)):
 
 @router.get("/stats")
 def stats(hall_id: int = 1, db: Session = Depends(get_db)):
+    """统计与最新方案同一套结果：占格、未排、缺考名单都跟当前策略对齐。"""
     data = latest(hall_id=hall_id, db=db)
-    return {"hall_id": hall_id, **mix_stats(data)}
+    return {"hall_id": hall_id, **(data.get("stats") or {})}
